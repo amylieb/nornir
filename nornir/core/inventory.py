@@ -13,9 +13,16 @@ from typing import (
     ValuesView,
 )
 
+from inspect import iscoroutinefunction
+
 from nornir.core.configuration import Config
 from nornir.core.exceptions import ConnectionAlreadyOpen, ConnectionNotOpen
-from nornir.core.plugins.connections import ConnectionPlugin, ConnectionPluginRegister
+from nornir.core.plugins.connections import (
+    ConnectionPlugin,
+    ConnectionPluginRegister,
+    AsyncConnectionPlugin,
+    AsyncConnectionPluginRegister,
+)
 
 HostOrGroup = TypeVar("HostOrGroup", "Host", "Group")
 
@@ -150,7 +157,9 @@ class InventoryElement(BaseAttributes):
         return {
             "groups": [g.name for g in self.groups],
             "data": self.data,
-            "connection_options": {k: v.dict() for k, v in self.connection_options.items()},
+            "connection_options": {
+                k: v.dict() for k, v in self.connection_options.items()
+            },
             **super().dict(),
         }
 
@@ -228,7 +237,9 @@ class Defaults(BaseAttributes):
     def dict(self) -> Dict[str, Any]:
         return {
             "data": self.data,
-            "connection_options": {k: v.dict() for k, v in self.connection_options.items()},
+            "connection_options": {
+                k: v.dict() for k, v in self.connection_options.items()
+            },
             **super().dict(),
         }
 
@@ -294,7 +305,9 @@ class Host(InventoryElement):
     def dict(self) -> Dict[str, Any]:
         return {
             "name": self.name,
-            "connection_options": {k: v.dict() for k, v in self.connection_options.items()},
+            "connection_options": {
+                k: v.dict() for k, v in self.connection_options.items()
+            },
             **super().dict(),
         }
 
@@ -397,7 +410,9 @@ class Host(InventoryElement):
         except KeyError:
             return default
 
-    def get_connection_parameters(self, connection: Optional[str] = None) -> ConnectionOptions:
+    def get_connection_parameters(
+        self, connection: Optional[str] = None
+    ) -> ConnectionOptions:
         if not connection:
             d = ConnectionOptions(
                 hostname=self.hostname,
@@ -429,7 +444,9 @@ class Host(InventoryElement):
                 )
         return d
 
-    def _get_connection_options_recursively(self, connection: str) -> Optional[ConnectionOptions]:
+    def _get_connection_options_recursively(
+        self, connection: str
+    ) -> Optional[ConnectionOptions]:
         p = self.connection_options.get(connection)
         if p is None:
             p = ConnectionOptions(None, None, None, None, None, None)
@@ -474,6 +491,37 @@ class Host(InventoryElement):
         if connection not in self.connections:
             conn = self.get_connection_parameters(connection)
             self.open_connection(
+                connection=connection,
+                configuration=configuration,
+                hostname=conn.hostname,
+                port=conn.port,
+                username=conn.username,
+                password=conn.password,
+                platform=conn.platform,
+                extras=conn.extras,
+            )
+        return self.connections[connection].connection
+
+    async def get_async_connection(self, connection: str, configuration: Config) -> Any:
+        """
+        The function of this method is twofold:
+
+            1. If an existing connection is already established for the given type return it
+            2. If none exists, establish a new connection of that type with default parameters
+               and return it
+
+        Raises:
+            AttributeError: if it's unknown how to establish a connection for the given type
+
+        Arguments:
+            connection: Name of the connection, for instance, netmiko, paramiko, napalm...
+
+        Returns:
+            An already established connection
+        """
+        if connection not in self.connections:
+            conn = self.get_connection_parameters(connection)
+            await self.open_async_connection(
                 connection=connection,
                 configuration=configuration,
                 hostname=conn.hostname,
@@ -537,6 +585,58 @@ class Host(InventoryElement):
         self.connections[conn_name] = conn_obj
         return conn_obj
 
+    async def open_async_connection(
+        self,
+        connection: str,
+        configuration: Config,
+        hostname: Optional[str] = None,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        port: Optional[int] = None,
+        platform: Optional[str] = None,
+        extras: Optional[Dict[str, Any]] = None,
+        default_to_host_attributes: bool = True,
+    ) -> ConnectionPlugin:
+        """
+        Open a new connection.
+
+        If ``default_to_host_attributes`` is set to ``True`` arguments will default to host
+        attributes if not specified.
+
+        Raises:
+            AttributeError: if it's unknown how to establish a connection for the given type
+
+        Returns:
+            An already established connection
+        """
+        conn_name = connection
+        existing_conn = self.connections.get(conn_name)
+        if existing_conn is not None:
+            raise ConnectionAlreadyOpen(conn_name)
+
+        plugin = AsyncConnectionPluginRegister.get_plugin(conn_name)
+        conn_obj = plugin()
+        if default_to_host_attributes:
+            conn_params = self.get_connection_parameters(conn_name)
+            hostname = hostname if hostname is not None else conn_params.hostname
+            username = username if username is not None else conn_params.username
+            password = password if password is not None else conn_params.password
+            port = port if port is not None else conn_params.port
+            platform = platform if platform is not None else conn_params.platform
+            extras = extras if extras is not None else conn_params.extras
+
+        await conn_obj.open(
+            hostname=hostname,
+            username=username,
+            password=password,
+            port=port,
+            platform=platform,
+            extras=extras,
+            configuration=configuration,
+        )
+        self.connections[conn_name] = conn_obj
+        return conn_obj
+
     def close_connection(self, connection: str) -> None:
         """Close the connection"""
         conn_name = connection
@@ -547,11 +647,27 @@ class Host(InventoryElement):
         if conn_obj is not None:
             conn_obj.close()
 
+    async def close_async_connection(self, connection: str) -> None:
+        """Close the connection"""
+        conn_name = connection
+        if conn_name not in self.connections:
+            raise ConnectionNotOpen(conn_name)
+
+        conn_obj = self.connections.pop(conn_name)
+        if conn_obj is not None:
+            await conn_obj.close()
+
     def close_connections(self) -> None:
         # Decouple deleting dictionary elements from iterating over connections dict
         existing_conns = list(self.connections.keys())
         for connection in existing_conns:
             self.close_connection(connection)
+
+    async def close_async_connections(self) -> None:
+        # Decouple deleting dictionary elements from iterating over connections dict
+        existing_conns = list(self.connections.keys())
+        for connection in existing_conns:
+            await self.close_connection(connection)
 
 
 class Group(Host):
@@ -597,7 +713,9 @@ class Inventory:
     ) -> "Inventory":
         filter_func = filter_obj or filter_func
         if filter_func:
-            filtered = Hosts({n: h for n, h in self.hosts.items() if filter_func(h, **kwargs)})
+            filtered = Hosts(
+                {n: h for n, h in self.hosts.items() if filter_func(h, **kwargs)}
+            )
         else:
             filtered = Hosts(
                 {

@@ -91,3 +91,7 @@ class NornirNoValidInventoryError(Exception):
 
 class ConflictingConfigurationWarning(UserWarning):
     pass
+
+
+class AsyncError(Exception):
+    pass

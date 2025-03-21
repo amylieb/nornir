@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Union
 
 from nornir.core import Nornir
 from nornir.core.configuration import Config
@@ -8,8 +8,16 @@ from nornir.core.plugins.inventory import (
     InventoryPluginRegister,
     TransformFunctionRegister,
 )
-from nornir.core.plugins.runners import RunnerPlugin, RunnersPluginRegister
+from nornir.core.plugins.runners import (
+    RunnerPlugin,
+    RunnersPluginRegister,
+    AsyncRunnerPlugin,
+    AsyncRunnersPluginRegister,
+)
 from nornir.core.state import GlobalState
+from nornir.core.exceptions import PluginNotRegistered
+
+import asyncio
 
 
 def load_inventory(
@@ -32,9 +40,15 @@ def load_inventory(
 
 def load_runner(
     config: Config,
-) -> RunnerPlugin:
+) -> Union[RunnerPlugin, AsyncRunnerPlugin]:
     RunnersPluginRegister.auto_register()
-    runner_plugin = RunnersPluginRegister.get_plugin(config.runner.plugin)
+    AsyncRunnersPluginRegister.auto_register()
+
+    try:
+        runner_plugin = RunnersPluginRegister.get_plugin(config.runner.plugin)
+    except PluginNotRegistered:
+        runner_plugin = AsyncRunnersPluginRegister.get_plugin(config.runner.plugin)
+
     return runner_plugin(**config.runner.options)
 
 
