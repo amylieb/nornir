@@ -1,6 +1,6 @@
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from typing import List
-
+from copy import deepcopy
 import asyncio
 from aiomultiprocess import Pool
 
@@ -48,6 +48,31 @@ class ThreadedRunner:
             result[worker_result.host.name] = worker_result
         return result
 
+class MultiProcessRunner:
+    """
+    MultiProcessRunner runs the task over each host using multiple processors
+
+    Arguments:
+        num_workers: number of threads to use
+    """
+
+    def __init__(self, num_workers: int = 10) -> None:
+        self.num_workers = num_workers
+
+    def run(self, task: Task, hosts: List[Host]) -> AggregatedResult:
+        result = AggregatedResult(task.name)
+        futures = []
+        with ProcessPoolExecutor(self.num_workers) as pool:
+            for host in hosts:
+                future = pool.submit(task.copy().start, host)
+                futures.append(future)
+
+        for future in futures:
+            worker_result = future.result()
+            result[worker_result.host.name] = worker_result
+        return result
+
+
 
 class AsyncRunner:
     """
@@ -77,14 +102,14 @@ class AsyncRunner:
                 result[host.name] = async_result[idx]
 
         return result
-
+    
 
 class AsyncMultiRunner:
     """
     Run tasks in multiple processes with aiomultiprocess
     """
 
-    def __init__(self, chunk_size=20, num_workers=None) -> None:
+    def __init__(self, chunk_size=20, num_workers=None, queuecount=4) -> None:
         self.chunk_size = chunk_size
         self.num_workers = num_workers
 
@@ -97,13 +122,13 @@ class AsyncMultiRunner:
 
         result = AggregatedResult(task.name)
 
+        async_results = []
         async with Pool(
             processes=self.num_workers, childconcurrency=self.chunk_size
         ) as pool:
-            async_result = await asyncio.gather(
-                *[pool.apply(task.copy().start, h) for h in hosts]
-            )
-
+            async for async_result in pool.map(task.start, hosts):
+                async_results.append(async_result)
+        
         for host, idx in zip(hosts, range(0, len(hosts))):
-            result[host.name] = async_result[idx]
+            result[host.name] = async_results[idx]
         return result

@@ -11,6 +11,7 @@ from typing import (
     cast,
     Awaitable,
 )
+from copy import deepcopy
 
 import asyncio
 
@@ -228,6 +229,7 @@ class AsyncTask:
             raise AsyncError("Task must be a coroutine function")
 
     def copy(self) -> "AsyncTask":
+
         return AsyncTask(
             self.task,
             self.nornir,
@@ -302,7 +304,7 @@ class AsyncTask:
         else:
             self.processors.task_instance_completed(self, host, self.results)
         return self.results
-
+    
     async def run(self, task: CoroutineFunction, **kwargs: Any) -> "MultiResult":
         """
         This is a utility method to call a task from within a task. For instance:
@@ -315,6 +317,7 @@ class AsyncTask:
 
         This method will ensure the subtask is run only for the host in the current thread.
         """
+
         if not self.host:
             msg = (
                 "You have to call this after setting host and nornir attributes. ",
@@ -421,6 +424,11 @@ class MultiResult(List[Result]):
         self.name = name
 
     def __getattr__(self, name: str) -> Any:
+
+        # Needed this to get aiomultiprocess runner to work
+        if name in ["__getstate__", "__setstate__"]:
+            return super().__getattr__(name)
+        
         return getattr(self[0], name)
 
     def __repr__(self) -> str:

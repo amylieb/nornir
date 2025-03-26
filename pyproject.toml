@@ -5,6 +5,7 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry.plugins."nornir.plugins.runners"]
 "serial" = "nornir.plugins.runners:SerialRunner"
 "threaded" = "nornir.plugins.runners:ThreadedRunner"
+"multiprocess" = "nornir.plugins.runners:MultiProcessRunner"
 "async" = "nornir.plugins.runners:AsyncRunner"
 "async_multi" = "nornir.plugins.runners:AsyncMultiRunner"
 
